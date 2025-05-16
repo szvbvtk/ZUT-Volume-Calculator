@@ -2,8 +2,8 @@ import streamlit as st
 import numpy as np
 from stl import mesh
 import plotly.graph_objects as go
-from abc import ABC, abstractmethod
 from io import BytesIO
+import trimesh
 
 
 class Solid:
@@ -14,11 +14,22 @@ class Solid:
 
         if stl_mesh is not None:
             self.process_stl()
+            self.init_trimesh()
 
     def process_stl(self):
         self.vertices = self.stl_mesh.vectors.reshape(-1, 3)
         self.faces = np.arange(len(self.vertices)).reshape(-1, 3)
         # self.faces = self.mesh.vectors
+
+    def init_trimesh(self):
+        self.tm_mesh = trimesh.Trimesh(
+            vertices=self.vertices, faces=self.faces, process=False
+        )
+
+    def contains(self, points):
+        if self.tm_mesh is None:
+            self.init_trimesh()
+        return self.tm_mesh.contains(points)
 
     def info(self):
         if self.stl_mesh is None:
@@ -33,6 +44,48 @@ class Solid:
                     "Z": [np.min(self.vertices[:, 2]), np.max(self.vertices[:, 2])],
                 },
             }
+
+class MonteCarloVolumeEstimator:
+    def __init__(self, solid, num_points=10000):
+        self.solid = solid
+        self.num_points = num_points
+        self.points = None
+        self.inside_points = None
+        self.bounding_box = self.compute_bounding_box()
+
+    def compute_bounding_box(self):
+        vertices = self.solid.vertices
+        min_bounds = np.min(vertices, axis=0)
+        max_bounds = np.max(vertices, axis=0)
+
+        return min_bounds, max_bounds
+    
+    def generate_random_points(self):
+        min_bounds, max_bounds = self.bounding_box
+
+        self.points = np.random.uniform(
+            low=min_bounds,
+            high=max_bounds,
+            size=(self.num_points, 3),
+        )
+
+    def run(self):
+        self.generate_random_points()
+
+        self.inside_points = self.solid.contains(self.points)
+
+        bounding_box_volume = np.prod(
+            self.bounding_box[1] - self.bounding_box[0]
+        )
+
+        volume_estimate = (
+            np.sum(self.inside_points) / self.num_points
+        ) * bounding_box_volume
+
+        return volume_estimate
+    
+    def get_points(self):
+        return self.points, self.inside_points
 
 
 class App:
@@ -107,6 +160,84 @@ class App:
             else:
                 st.sidebar.write(f"{key}: {value}")
 
+    def monte_carlo_ui(self):
+        if self.solid is None:
+            st.warning("Nie wczytano pliku STL.")
+            return
+        
+        st.sidebar.subheader("metoda Monte Carlo")
+
+        num_points = st.sidebar.slider(
+            "Liczba punktów Monte Carlo",
+            min_value=1000,
+            max_value=100000,
+            value=10000,
+            step=100,
+        )
+
+        if st.sidebar.button("Oblicz objętość"):
+            estimator = MonteCarloVolumeEstimator(self.solid, num_points)
+            volume = estimator.run()
+
+            st.sidebar.success(f"Przybliżona objętość: {volume:.2f} jednostek^3")
+
+            points, inside_points = estimator.get_points()
+            self.plot_monte_carlo(points, inside_points)
+
+    def plot_monte_carlo(self, points, inside_points):
+        fig = go.Figure()
+
+        vertices = self.solid.vertices
+        faces = self.solid.faces
+
+        fig.add_trace(
+            go.Mesh3d(
+                x=vertices[:, 0],
+                y=vertices[:, 1],
+                z=vertices[:, 2],
+                i=faces[:, 0],
+                j=faces[:, 1],
+                k=faces[:, 2],
+                opacity=0.25,
+                color="lightblue",
+                name="Bryła"
+            )
+        )
+
+        fig.add_trace(
+            go.Scatter3d(
+                x=points[inside_points, 0],
+                y=points[inside_points, 1],
+                z=points[inside_points, 2],
+                mode="markers",
+                marker=dict(size=2, color="green"),
+                name="Punkty wewnętrzne",
+            )
+        )
+
+        fig.add_trace(
+            go.Scatter3d(
+                x=points[~inside_points, 0],
+                y=points[~inside_points, 1],
+                z=points[~inside_points, 2],
+                mode="markers",
+                marker=dict(size=2, color="red"),
+                name="Punkty zewnętrzne",
+            )
+        )
+
+        fig.update_layout(
+            scene=dict(
+                xaxis=dict(visible=False),
+                yaxis=dict(visible=False),
+                zaxis=dict(visible=False),
+                aspectmode="data",
+            ),
+            title="Punkty Monte Carlo",
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
+
 
 def run_app():
     st.set_page_config(page_title="Wizualizacja STL", layout="wide")
@@ -116,6 +247,7 @@ def run_app():
     app.load_stl()
     app.display_stl()
     app.display_info()
+    app.monte_carlo_ui()
 
 
 if __name__ == "__main__":
