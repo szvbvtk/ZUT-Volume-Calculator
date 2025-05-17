@@ -167,12 +167,22 @@ class App:
         
         st.sidebar.subheader("metoda Monte Carlo")
 
-        num_points = st.sidebar.slider(
+        # num_points = st.sidebar.slider(
+        #     "Liczba punktów Monte Carlo",
+        #     min_value=1000,
+        #     max_value=100000,
+        #     value=10000,
+        #     step=100,
+        # )
+
+        num_points = st.sidebar.number_input(
             "Liczba punktów Monte Carlo",
             min_value=1000,
             max_value=100000,
             value=10000,
-            step=100,
+            step=1000,
+            format="%d",
+            help="Liczba punktów do użycia w symulacji Monte Carlo.",
         )
 
         if st.sidebar.button("Oblicz objętość"):
@@ -246,8 +256,8 @@ def run_app():
     app = App()
     app.load_stl()
     app.display_stl()
-    app.display_info()
     app.monte_carlo_ui()
+    app.display_info()
 
 
 if __name__ == "__main__":
