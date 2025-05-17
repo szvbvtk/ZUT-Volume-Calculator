@@ -291,13 +291,10 @@ class App:
             start_time = time.time()
             estimator = MonteCarloVolumeEstimator(self.solid, num_points)
 
-            # with st.spinner("Obliczanie objętości..."):
-            #     volume = estimator.run()
-
             progress_bar = st.progress(0, text="Obliczanie objętości...")
 
             volume = estimator.run_with_progress(progress_callback=update_progress)
-
+# 
             points, inside_points = estimator.get_points()
             self.plot_monte_carlo(points, inside_points)
 
