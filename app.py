@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 from io import BytesIO
 import concurrent.futures
 import time
+from uuid import uuid4
 
 
 def ray_intersects_triangle(orig, dir, v0, v1, v2):
@@ -74,12 +75,12 @@ class Solid:
 
         return intersection_count % 2 == 1
 
-    # def contains(self, points):
-    #     return np.array([self.is_point_inside(point) for point in points], dtype=bool)
-
     def contains(self, points):
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            results = list(executor.map(self.is_point_inside, points))
+        return np.array([self.is_point_inside(point) for point in points], dtype=bool)
+
+    # def contains(self, points):
+    #     with concurrent.futures.ThreadPoolExecutor() as executor:
+    #         results = list(executor.map(self.is_point_inside, points))
 
         return np.array(results, dtype=bool)
 
@@ -137,11 +138,36 @@ class MonteCarloVolumeEstimator:
 
     def get_points(self):
         return self.points, self.inside_points
+    
+    def run_with_progress(self, progress_callback=None):
+        self.generate_random_points()
+
+        total = len(self.points)
+        inside = np.zeros(total, dtype=bool)
+
+        for i, point in enumerate(self.points):
+            inside[i] = self.solid.is_point_inside(point)
+            # aktualizuj pasek co pewien procent
+            if progress_callback and i % max(1, total // 100) == 0:
+                progress_callback(i / total)
+
+        self.inside_points = inside
+
+        bounding_box_volume = np.prod(self.bounding_box[1] - self.bounding_box[0])
+        volume_estimate = (np.sum(self.inside_points) / self.num_points) * bounding_box_volume
+
+        return volume_estimate
+
 
 
 class App:
     def __init__(self):
         self.solid = None
+        self.plot_container = None
+        self.default_plot = None
+
+    def set_computed_flag(self, val):
+        st.session_state.is_monte_carlo_computed = val
 
     def load_stl(self):
         st.sidebar.title("Wczytaj plik STL")
@@ -152,7 +178,7 @@ class App:
                 uploaded_file.name, fh=BytesIO(uploaded_file.read())
             )
             self.solid = Solid(stl_mesh)
-            st.success("Plik STL został wczytany pomyślnie.")
+            # st.success("Plik STL został wczytany pomyślnie.")
         else:
             st.info("Proszę wczytać plik STL.")
 
@@ -160,6 +186,9 @@ class App:
         if self.solid is None:
             st.warning("Nie wczytano pliku STL.")
             return
+        
+        if self.plot_container is not None:
+            self.plot_container.empty()
 
         fig = go.Figure()
 
@@ -182,24 +211,30 @@ class App:
 
         fig.update_layout(
             scene=dict(
-                # xaxis=dict(title='X'),
-                # yaxis=dict(title='Y'),
-                # zaxis=dict(title='Z'),
                 xaxis=dict(visible=False),
                 yaxis=dict(visible=False),
                 zaxis=dict(visible=False),
                 aspectmode="data",
             ),
-            title="Wizualizacja STL",
+            title="Bryła",
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        if self.plot_container is None:
+            self.plot_container = st.empty()
+        else:
+            self.plot_container.empty()
+
+        self.plot_container.plotly_chart(fig, use_container_width=True, key="plot")
+        self.default_plot = fig
+
 
     def display_info(self):
         if self.solid is None:
             return
 
+        st.sidebar.divider()
         st.sidebar.subheader("Informacje o modelu")
+
         info = self.solid.info()
 
         for key, value in info.items():
@@ -218,14 +253,6 @@ class App:
 
         st.sidebar.subheader("metoda Monte Carlo")
 
-        # num_points = st.sidebar.slider(
-        #     "Liczba punktów Monte Carlo",
-        #     min_value=10,
-        #     max_value=100000,
-        #     value=10000,
-        #     step=100,
-        # )
-
         num_points = st.sidebar.number_input(
             "Liczba punktów Monte Carlo",
             min_value=10,
@@ -236,16 +263,51 @@ class App:
             help="Liczba punktów Monte Carlo do oszacowania objętości.",
         )
 
-        if st.sidebar.button("Oblicz objętość"):
+        col1, col2 = st.sidebar.columns(2, gap="small")
+
+        with col1:
+            calculate_button = st.button("Oblicz objętość", key="calculate_button", on_click=self.set_computed_flag, args=(True,))
+
+        reset_button = False
+        if st.session_state.is_monte_carlo_computed:
+            with col2:
+                reset_button = st.button("Resetuj wyniki", key="reset_button", on_click=self.set_computed_flag, args=(False,))
+
+        if reset_button:       
+            if self.plot_container is not None:
+                self.plot_container.empty()
+
+            self.plot_container.plotly_chart(self.default_plot, use_container_width=True, key=f"plot_{uuid4()}")
+
+            st.sidebar.info("Wyniki zostały zresetowane.")
+
+        if calculate_button:
+            if self.plot_container is not None:
+                self.plot_container.empty()
+
+            def update_progress(pct):
+                progress_bar.progress(min(int(pct * 100), 100), text=f"Obliczanie... {int(pct * 100)}%")
+
+            start_time = time.time()
             estimator = MonteCarloVolumeEstimator(self.solid, num_points)
 
-            with st.spinner("Obliczanie objętości..."):
-                volume = estimator.run()
+            # with st.spinner("Obliczanie objętości..."):
+            #     volume = estimator.run()
 
-            st.sidebar.success(f"Przybliżona objętość: {volume:.2f} jednostek^3")
+            progress_bar = st.progress(0, text="Obliczanie objętości...")
+
+            volume = estimator.run_with_progress(progress_callback=update_progress)
 
             points, inside_points = estimator.get_points()
             self.plot_monte_carlo(points, inside_points)
+
+            elapsed_time = time.time() - start_time
+            st.sidebar.success(f"Przybliżona objętość: {volume:.2f} jednostek^3")
+            st.sidebar.info(f"Czas obliczeń: {elapsed_time:.2f} sekund")
+            progress_bar.empty()
+
+
+    
 
     def plot_monte_carlo(self, points, inside_points):
         fig = go.Figure()
@@ -299,18 +361,28 @@ class App:
             title="Punkty Monte Carlo",
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        if self.plot_container is not None:
+            self.plot_container.empty()
+
+        self.plot_container = st.empty()
+        self.plot_container.plotly_chart(fig, use_container_width=True, key="monte_carlo_plot")
 
 
 def run_app():
-    st.set_page_config(page_title="Wizualizacja STL", layout="wide")
-    st.title("Wizualizacja STL")
+    st.set_page_config(page_title="VolumeCalc", layout="wide")
+    st.title("Kalkulator objętości bryły")
 
     app = App()
+
+    if "is_monte_carlo_computed" not in st.session_state:
+        st.session_state.is_monte_carlo_computed = False
+
     app.load_stl()
     app.display_stl()
     app.monte_carlo_ui()
     app.display_info()
+
+
 
 
 if __name__ == "__main__":
