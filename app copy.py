@@ -3,8 +3,6 @@ import numpy as np
 from stl import mesh
 import plotly.graph_objects as go
 from io import BytesIO
-import concurrent.futures
-import time
 
 
 def ray_intersects_triangle(orig, dir, v0, v1, v2):
@@ -37,7 +35,6 @@ class Solid:
         self.stl_mesh = stl_mesh
         self.vertices = None
         self.faces = None
-        self.triangle_bboxes = None
 
         if stl_mesh is not None:
             self.process_stl()
@@ -47,24 +44,11 @@ class Solid:
         self.faces = np.arange(len(self.vertices)).reshape(-1, 3)
         # self.faces = self.mesh.vectors
 
-        tris = self.vertices[self.faces]
-        self.triangle_bboxes = np.empty((len(self.faces), 2, 3))
-        self.triangle_bboxes[:, 0, :] = np.min(tris, axis=1)
-        self.triangle_bboxes[:, 1, :] = np.max(tris, axis=1)
-
     def is_point_inside(self, point):
         direction_vector = np.array([1, 0, 0])
         intersection_count = 0
 
-        y_in_range = (point[1] >= self.triangle_bboxes[:, 0, 1]) & (
-            point[1] <= self.triangle_bboxes[:, 1, 1]
-        )
-        z_in_range = (point[2] >= self.triangle_bboxes[:, 0, 2]) & (
-            point[2] <= self.triangle_bboxes[:, 1, 2]
-        )
-        candidates = np.where(y_in_range & z_in_range)[0]
-
-        for i in candidates:
+        for i in range(len(self.faces)):
             v0 = self.vertices[self.faces[i][0]]
             v1 = self.vertices[self.faces[i][1]]
             v2 = self.vertices[self.faces[i][2]]
@@ -72,16 +56,11 @@ class Solid:
             if ray_intersects_triangle(point, direction_vector, v0, v1, v2):
                 intersection_count += 1
 
-        return intersection_count % 2 == 1
-
-    # def contains(self, points):
-    #     return np.array([self.is_point_inside(point) for point in points], dtype=bool)
+        is_inside = intersection_count % 2 == 1
+        return is_inside
 
     def contains(self, points):
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            results = list(executor.map(self.is_point_inside, points))
-
-        return np.array(results, dtype=bool)
+        return np.array([self.is_point_inside(point) for point in points], dtype=bool)
 
     def info(self):
         if self.stl_mesh is None:
@@ -218,29 +197,17 @@ class App:
 
         st.sidebar.subheader("metoda Monte Carlo")
 
-        # num_points = st.sidebar.slider(
-        #     "Liczba punktów Monte Carlo",
-        #     min_value=10,
-        #     max_value=100000,
-        #     value=10000,
-        #     step=100,
-        # )
-
-        num_points = st.sidebar.number_input(
+        num_points = st.sidebar.slider(
             "Liczba punktów Monte Carlo",
             min_value=10,
             max_value=100000,
-            value=1000,
+            value=10000,
             step=100,
-            format="%d",
-            help="Liczba punktów Monte Carlo do oszacowania objętości.",
         )
 
         if st.sidebar.button("Oblicz objętość"):
             estimator = MonteCarloVolumeEstimator(self.solid, num_points)
-
-            with st.spinner("Obliczanie objętości..."):
-                volume = estimator.run()
+            volume = estimator.run()
 
             st.sidebar.success(f"Przybliżona objętość: {volume:.2f} jednostek^3")
 
@@ -309,8 +276,8 @@ def run_app():
     app = App()
     app.load_stl()
     app.display_stl()
-    app.monte_carlo_ui()
     app.display_info()
+    app.monte_carlo_ui()
 
 
 if __name__ == "__main__":
