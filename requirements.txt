@@ -4,6 +4,3 @@ plotly
 numpy
 trimesh
 rtree
-uuid
-io
-time
