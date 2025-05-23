@@ -1,0 +1,9 @@
+numpy-stl
+streamlit
+plotly
+numpy
+trimesh
+rtree
+uuid
+io
+time

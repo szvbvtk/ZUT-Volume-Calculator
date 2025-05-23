@@ -3,7 +3,6 @@ import numpy as np
 from stl import mesh
 import plotly.graph_objects as go
 from io import BytesIO
-import concurrent.futures
 import time
 from uuid import uuid4
 
