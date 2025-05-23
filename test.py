@@ -45,8 +45,6 @@ class Solid:
     def process_stl(self):
         self.vertices = self.stl_mesh.vectors.reshape(-1, 3)
         self.faces = np.arange(len(self.vertices)).reshape(-1, 3)
-        # self.faces = self.mesh.vectors
-
         tris = self.vertices[self.faces]
         self.triangle_bboxes = np.empty((len(self.faces), 2, 3))
         self.triangle_bboxes[:, 0, :] = np.min(tris, axis=1)
@@ -77,12 +75,6 @@ class Solid:
     def contains(self, points):
         return np.array([self.is_point_inside(point) for point in points], dtype=bool)
 
-    # def contains(self, points):
-    #     with concurrent.futures.ThreadPoolExecutor() as executor:
-    #         results = list(executor.map(self.is_point_inside, points))
-
-        return np.array(results, dtype=bool)
-
     def info(self):
         if self.stl_mesh is None:
             return "Nie wczytano pliku STL."
@@ -110,12 +102,10 @@ class MonteCarloVolumeEstimator:
         vertices = self.solid.vertices
         min_bounds = np.min(vertices, axis=0)
         max_bounds = np.max(vertices, axis=0)
-
         return min_bounds, max_bounds
 
     def generate_random_points(self):
         min_bounds, max_bounds = self.bounding_box
-
         self.points = np.random.uniform(
             low=min_bounds,
             high=max_bounds,
@@ -124,73 +114,83 @@ class MonteCarloVolumeEstimator:
 
     def run(self):
         self.generate_random_points()
-
         self.inside_points = self.solid.contains(self.points)
-
         bounding_box_volume = np.prod(self.bounding_box[1] - self.bounding_box[0])
-
         volume_estimate = (
             np.sum(self.inside_points) / self.num_points
         ) * bounding_box_volume
-
         return volume_estimate
 
     def get_points(self):
         return self.points, self.inside_points
-    
+
     def run_with_progress(self, progress_callback=None):
         self.generate_random_points()
-
         total = len(self.points)
         inside = np.zeros(total, dtype=bool)
 
         for i, point in enumerate(self.points):
             inside[i] = self.solid.is_point_inside(point)
-            # aktualizuj pasek co pewien procent
             if progress_callback and i % max(1, total // 100) == 0:
                 progress_callback(i / total)
 
         self.inside_points = inside
-
         bounding_box_volume = np.prod(self.bounding_box[1] - self.bounding_box[0])
         volume_estimate = (np.sum(self.inside_points) / self.num_points) * bounding_box_volume
-
         return volume_estimate
 
 
-class CubeVolumeEstimator:
-    def __init__(self, solid, cube_size=1):
+# Nowa klasa dla metody prostokątów
+class RectangleVolumeEstimator:
+    def __init__(self, solid, grid_size=10):
         self.solid = solid
-        self.cube_size = cube_size
-        self.bounding_box = self.solid.vertices.min(axis=0), self.solid.vertices.max(axis=0)
+        self.grid_size = grid_size
+        self.points = None
+        self.inside_points = None
+        self.bounding_box = self.compute_bounding_box()
+        self.voxel_volume = None
 
-    def run(self, progress_callback=None):
+    def compute_bounding_box(self):
+        vertices = self.solid.vertices
+        min_bounds = np.min(vertices, axis=0)
+        max_bounds = np.max(vertices, axis=0)
+        return min_bounds, max_bounds
+
+    def generate_grid_points(self):
         min_bounds, max_bounds = self.bounding_box
-        cube_size = self.cube_size
-        cube_volume = cube_size ** 3
+        
+        x = np.linspace(min_bounds[0], max_bounds[0], self.grid_size)
+        y = np.linspace(min_bounds[1], max_bounds[1], self.grid_size)
+        z = np.linspace(min_bounds[2], max_bounds[2], self.grid_size)
+        X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
+        self.points = np.vstack([X.ravel(), Y.ravel(), Z.ravel()]).T
+        
+        voxel_dims = (max_bounds - min_bounds) / (self.grid_size - 1)
+        self.voxel_volume = np.prod(voxel_dims)
 
-        x_vals = np.arange(min_bounds[0], max_bounds[0], cube_size)
-        y_vals = np.arange(min_bounds[1], max_bounds[1], cube_size)
-        z_vals = np.arange(min_bounds[2], max_bounds[2], cube_size)
-
-        total_cubes = len(x_vals) * len(y_vals) * len(z_vals)
-        inside_count = 0
-        checked_cubes = 0
-
-        for xi, x in enumerate(x_vals):
-            for yi, y in enumerate(y_vals):
-                for zi, z in enumerate(z_vals):
-                    cube_center = np.array([x + cube_size / 2, y + cube_size / 2, z + cube_size / 2])
-                    if self.solid.is_point_inside(cube_center):
-                        inside_count += 1
-
-                    checked_cubes += 1
-
-                    if progress_callback and checked_cubes % max(1, total_cubes // 100) == 0:
-                        progress_callback(checked_cubes / total_cubes)
-
-        volume_estimate = inside_count * cube_volume
+    def run(self):
+        self.generate_grid_points()
+        self.inside_points = self.solid.contains(self.points)
+        volume_estimate = np.sum(self.inside_points) * self.voxel_volume
         return volume_estimate
+
+    def run_with_progress(self, progress_callback=None):
+        self.generate_grid_points()
+        total = len(self.points)
+        inside = np.zeros(total, dtype=bool)
+
+        for i, point in enumerate(self.points):
+            inside[i] = self.solid.is_point_inside(point)
+            if progress_callback and i % max(1, total // 100) == 0:
+                progress_callback(i / total)
+
+        self.inside_points = inside
+        volume_estimate = np.sum(self.inside_points) * self.voxel_volume
+        return volume_estimate
+
+    def get_points(self):
+        return self.points, self.inside_points
+
 
 class App:
     def __init__(self):
@@ -199,7 +199,7 @@ class App:
         self.default_plot = None
 
     def set_computed_flag(self, val):
-        st.session_state.is_monte_carlo_computed = val
+        st.session_state.is_volume_computed = val
 
     def load_stl(self):
         st.sidebar.title("Wczytaj plik STL")
@@ -210,7 +210,6 @@ class App:
                 uploaded_file.name, fh=BytesIO(uploaded_file.read())
             )
             self.solid = Solid(stl_mesh)
-            # st.success("Plik STL został wczytany pomyślnie.")
         else:
             st.info("Proszę wczytać plik STL.")
 
@@ -223,11 +222,9 @@ class App:
             self.plot_container.empty()
 
         fig = go.Figure()
-
         vertices = self.solid.vertices
         faces = self.solid.faces
 
-        # Create a mesh3d plot
         fig.add_trace(
             go.Mesh3d(
                 x=vertices[:, 0],
@@ -259,7 +256,6 @@ class App:
         self.plot_container.plotly_chart(fig, use_container_width=True, key="plot")
         self.default_plot = fig
 
-
     def display_info(self):
         if self.solid is None:
             return
@@ -268,32 +264,46 @@ class App:
         st.sidebar.subheader("Informacje o modelu")
 
         info = self.solid.info()
-
         for key, value in info.items():
             if isinstance(value, dict):
                 st.sidebar.write(f"{key}:")
                 for sub_key, sub_value in value.items():
                     st.sidebar.write(f"  {sub_key}: {sub_value}")
-                    pass
             else:
                 st.sidebar.write(f"{key}: {value}")
 
-    def monte_carlo_ui(self):
+    def volume_calculation_ui(self):
         if self.solid is None:
             st.warning("Nie wczytano pliku STL.")
             return
 
-        st.sidebar.subheader("metoda Monte Carlo")
-
-        num_points = st.sidebar.number_input(
-            "Liczba punktów Monte Carlo",
-            min_value=10,
-            max_value=100000,
-            value=1000,
-            step=100,
-            format="%d",
-            help="Liczba punktów Monte Carlo do oszacowania objętości.",
+        st.sidebar.subheader("Obliczanie objętości")
+        method = st.sidebar.selectbox(
+            "Wybierz metodę",
+            ["Monte Carlo", "Prostokąty"],
+            help="Wybierz metodę obliczania objętości."
         )
+
+        if method == "Monte Carlo":
+            num_points = st.sidebar.number_input(
+                "Liczba punktów Monte Carlo",
+                min_value=10,
+                max_value=100000,
+                value=1000,
+                step=100,
+                format="%d",
+                help="Liczba losowych punktów do oszacowania objętości.",
+            )
+        else:  # Prostokąty
+            grid_size = st.sidebar.number_input(
+                "Liczba podziałów siatki na oś",
+                min_value=5,
+                max_value=100,
+                value=10,
+                step=1,
+                format="%d",
+                help="Liczba podziałów siatki w każdym wymiarze (X, Y, Z).",
+            )
 
         col1, col2 = st.sidebar.columns(2, gap="small")
 
@@ -301,16 +311,14 @@ class App:
             calculate_button = st.button("Oblicz objętość", key="calculate_button", on_click=self.set_computed_flag, args=(True,))
 
         reset_button = False
-        if st.session_state.is_monte_carlo_computed:
+        if st.session_state.is_volume_computed:
             with col2:
                 reset_button = st.button("Resetuj wyniki", key="reset_button", on_click=self.set_computed_flag, args=(False,))
 
         if reset_button:       
             if self.plot_container is not None:
                 self.plot_container.empty()
-
             self.plot_container.plotly_chart(self.default_plot, use_container_width=True, key=f"plot_{uuid4()}")
-
             st.sidebar.info("Wyniki zostały zresetowane.")
 
         if calculate_button:
@@ -321,65 +329,23 @@ class App:
                 progress_bar.progress(min(int(pct * 100), 100), text=f"Obliczanie... {int(pct * 100)}%")
 
             start_time = time.time()
-            estimator = MonteCarloVolumeEstimator(self.solid, num_points)
+            if method == "Monte Carlo":
+                estimator = MonteCarloVolumeEstimator(self.solid, num_points)
+            else:
+                estimator = RectangleVolumeEstimator(self.solid, grid_size)
 
             progress_bar = st.progress(0, text="Obliczanie objętości...")
-
             volume = estimator.run_with_progress(progress_callback=update_progress)
-# 
             points, inside_points = estimator.get_points()
-            self.plot_monte_carlo(points, inside_points)
+            self.plot_points(points, inside_points, method)
 
             elapsed_time = time.time() - start_time
             st.sidebar.success(f"Przybliżona objętość: {volume:.2f} jednostek^3")
             st.sidebar.info(f"Czas obliczeń: {elapsed_time:.2f} sekund")
             progress_bar.empty()
 
-    def cube_ui(self):
-        if self.solid is None:
-            st.warning("Nie wczytano pliku STL.")
-            return
-
-        st.sidebar.subheader("metoda sześcianów")
-
-        cube_size = st.sidebar.number_input(
-            "Rozmiar sześcianu",
-            min_value=0.01,
-            max_value=10.0,
-            value=1.0,
-            step=0.01,
-            format="%.2f",
-            help="Rozmiar sześcianu do oszacowania objętości.",
-        )
-
-        calculate_button = st.sidebar.button("Oblicz objętość", key="calculate_button2")
-
-
-        if calculate_button:
-            if self.plot_container is not None:
-                self.plot_container.empty()
-
-            start_time = time.time()
-            estimator = CubeVolumeEstimator(self.solid, cube_size)
-
-            def update_progress(pct):
-                progress_bar.progress(min(int(pct * 100), 100), text=f"Obliczanie... {int(pct * 100)}%")
-
-            progress_bar = st.progress(0, text="Obliczanie objętości...")
-
-            volume = estimator.run(progress_callback=update_progress)
-
-            # self.plot_cubes
-
-            elapsed_time = time.time() - start_time
-            st.sidebar.success(f"Przybliżona objętość: {volume:.2f} jednostek^3")
-            st.sidebar.info(f"Czas obliczeń: {elapsed_time:.2f} sekund")
-
-    
-
-    def plot_monte_carlo(self, points, inside_points):
+    def plot_points(self, points, inside_points, method):
         fig = go.Figure()
-
         vertices = self.solid.vertices
         faces = self.solid.faces
 
@@ -426,16 +392,14 @@ class App:
                 zaxis=dict(visible=False),
                 aspectmode="data",
             ),
-            title="Punkty Monte Carlo",
+            title=f"Punkty ({method})",
         )
 
         if self.plot_container is not None:
             self.plot_container.empty()
 
         self.plot_container = st.empty()
-        self.plot_container.plotly_chart(fig, use_container_width=True, key="monte_carlo_plot")
-
-    
+        self.plot_container.plotly_chart(fig, use_container_width=True, key="volume_calc_plot")
 
 
 def run_app():
@@ -444,16 +408,13 @@ def run_app():
 
     app = App()
 
-    if "is_monte_carlo_computed" not in st.session_state:
-        st.session_state.is_monte_carlo_computed = False
+    if "is_volume_computed" not in st.session_state:
+        st.session_state.is_volume_computed = False
 
     app.load_stl()
     app.display_stl()
-    app.monte_carlo_ui()
-    app.cube_ui()
+    app.volume_calculation_ui()
     app.display_info()
-
-
 
 
 if __name__ == "__main__":
