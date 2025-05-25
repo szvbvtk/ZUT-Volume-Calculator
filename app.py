@@ -77,11 +77,6 @@ class Solid:
     def contains(self, points):
         return np.array([self.is_point_inside(point) for point in points], dtype=bool)
 
-    # def contains(self, points):
-    #     with concurrent.futures.ThreadPoolExecutor() as executor:
-    #         results = list(executor.map(self.is_point_inside, points))
-
-        return np.array(results, dtype=bool)
 
     def info(self):
         if self.stl_mesh is None:
@@ -137,7 +132,7 @@ class MonteCarloVolumeEstimator:
 
     def get_points(self):
         return self.points, self.inside_points
-    
+
     def run_with_progress(self, progress_callback=None):
         self.generate_random_points()
 
@@ -146,14 +141,16 @@ class MonteCarloVolumeEstimator:
 
         for i, point in enumerate(self.points):
             inside[i] = self.solid.is_point_inside(point)
-            # aktualizuj pasek co pewien procent
+            
             if progress_callback and i % max(1, total // 100) == 0:
                 progress_callback(i / total)
 
         self.inside_points = inside
 
         bounding_box_volume = np.prod(self.bounding_box[1] - self.bounding_box[0])
-        volume_estimate = (np.sum(self.inside_points) / self.num_points) * bounding_box_volume
+        volume_estimate = (
+            np.sum(self.inside_points) / self.num_points
+        ) * bounding_box_volume
 
         return volume_estimate
 
@@ -162,12 +159,16 @@ class CubeVolumeEstimator:
     def __init__(self, solid, cube_size=1):
         self.solid = solid
         self.cube_size = cube_size
-        self.bounding_box = self.solid.vertices.min(axis=0), self.solid.vertices.max(axis=0)
+        self.bounding_box = self.solid.vertices.min(axis=0), self.solid.vertices.max(
+            axis=0
+        )
+        self.inside_cubes = None
+        self.cube_centers = None 
 
     def run(self, progress_callback=None):
         min_bounds, max_bounds = self.bounding_box
         cube_size = self.cube_size
-        cube_volume = cube_size ** 3
+        cube_volume = cube_size**3
 
         x_vals = np.arange(min_bounds[0], max_bounds[0], cube_size)
         y_vals = np.arange(min_bounds[1], max_bounds[1], cube_size)
@@ -176,27 +177,44 @@ class CubeVolumeEstimator:
         total_cubes = len(x_vals) * len(y_vals) * len(z_vals)
         inside_count = 0
         checked_cubes = 0
+        inside = np.zeros(total_cubes, dtype=bool)
+        centers = []  # Lista do przechowywania centrów sześcianów
 
         for xi, x in enumerate(x_vals):
             for yi, y in enumerate(y_vals):
                 for zi, z in enumerate(z_vals):
-                    cube_center = np.array([x + cube_size / 2, y + cube_size / 2, z + cube_size / 2])
-                    if self.solid.is_point_inside(cube_center):
+                    cube_center = np.array(
+                        [x + cube_size / 2, y + cube_size / 2, z + cube_size / 2]
+                    )
+                    inside[checked_cubes] = self.solid.is_point_inside(cube_center)
+                    centers.append(cube_center)
+
+                    if inside[checked_cubes]:
                         inside_count += 1
 
                     checked_cubes += 1
 
-                    if progress_callback and checked_cubes % max(1, total_cubes // 100) == 0:
+                    if (
+                        progress_callback
+                        and checked_cubes % max(1, total_cubes // 100) == 0
+                    ):
                         progress_callback(checked_cubes / total_cubes)
 
         volume_estimate = inside_count * cube_volume
+        self.inside_cubes = inside
+        self.cube_centers = np.array(centers)  # Zapis centrów sześcianów
         return volume_estimate
+
+    def get_cubes(self):
+        return self.cube_centers, self.inside_cubes
+
 
 class App:
     def __init__(self):
         self.solid = None
         self.plot_container = None
         self.default_plot = None
+        self.cube_size = 1.0
 
     def set_computed_flag(self, val):
         st.session_state.is_monte_carlo_computed = val
@@ -218,7 +236,7 @@ class App:
         if self.solid is None:
             st.warning("Nie wczytano pliku STL.")
             return
-        
+
         if self.plot_container is not None:
             self.plot_container.empty()
 
@@ -227,7 +245,6 @@ class App:
         vertices = self.solid.vertices
         faces = self.solid.faces
 
-        # Create a mesh3d plot
         fig.add_trace(
             go.Mesh3d(
                 x=vertices[:, 0],
@@ -258,7 +275,6 @@ class App:
 
         self.plot_container.plotly_chart(fig, use_container_width=True, key="plot")
         self.default_plot = fig
-
 
     def display_info(self):
         if self.solid is None:
@@ -298,18 +314,30 @@ class App:
         col1, col2 = st.sidebar.columns(2, gap="small")
 
         with col1:
-            calculate_button = st.button("Oblicz objętość", key="calculate_button", on_click=self.set_computed_flag, args=(True,))
+            calculate_button = st.button(
+                "Oblicz objętość",
+                key="calculate_button",
+                on_click=self.set_computed_flag,
+                args=(True,),
+            )
 
         reset_button = False
         if st.session_state.is_monte_carlo_computed:
             with col2:
-                reset_button = st.button("Resetuj wyniki", key="reset_button", on_click=self.set_computed_flag, args=(False,))
+                reset_button = st.button(
+                    "Resetuj wyniki",
+                    key="reset_button",
+                    on_click=self.set_computed_flag,
+                    args=(False,),
+                )
 
-        if reset_button:       
+        if reset_button:
             if self.plot_container is not None:
                 self.plot_container.empty()
 
-            self.plot_container.plotly_chart(self.default_plot, use_container_width=True, key=f"plot_{uuid4()}")
+            self.plot_container.plotly_chart(
+                self.default_plot, use_container_width=True, key=f"plot_{uuid4()}"
+            )
 
             st.sidebar.info("Wyniki zostały zresetowane.")
 
@@ -318,7 +346,9 @@ class App:
                 self.plot_container.empty()
 
             def update_progress(pct):
-                progress_bar.progress(min(int(pct * 100), 100), text=f"Obliczanie... {int(pct * 100)}%")
+                progress_bar.progress(
+                    min(int(pct * 100), 100), text=f"Obliczanie... {int(pct * 100)}%"
+                )
 
             start_time = time.time()
             estimator = MonteCarloVolumeEstimator(self.solid, num_points)
@@ -326,7 +356,7 @@ class App:
             progress_bar = st.progress(0, text="Obliczanie objętości...")
 
             volume = estimator.run_with_progress(progress_callback=update_progress)
-# 
+            #
             points, inside_points = estimator.get_points()
             self.plot_monte_carlo(points, inside_points)
 
@@ -342,10 +372,10 @@ class App:
 
         st.sidebar.subheader("metoda sześcianów")
 
-        cube_size = st.sidebar.number_input(
+        self.cube_size = st.sidebar.number_input(
             "Rozmiar sześcianu",
             min_value=0.01,
-            max_value=10.0,
+            max_value=50.0,
             value=1.0,
             step=0.01,
             format="%.2f",
@@ -354,28 +384,28 @@ class App:
 
         calculate_button = st.sidebar.button("Oblicz objętość", key="calculate_button2")
 
-
         if calculate_button:
             if self.plot_container is not None:
                 self.plot_container.empty()
 
             start_time = time.time()
-            estimator = CubeVolumeEstimator(self.solid, cube_size)
+            estimator = CubeVolumeEstimator(self.solid, self.cube_size)
 
             def update_progress(pct):
-                progress_bar.progress(min(int(pct * 100), 100), text=f"Obliczanie... {int(pct * 100)}%")
+                progress_bar.progress(
+                    min(int(pct * 100), 100), text=f"Obliczanie... {int(pct * 100)}%"
+                )
 
             progress_bar = st.progress(0, text="Obliczanie objętości...")
 
             volume = estimator.run(progress_callback=update_progress)
-
-            # self.plot_cubes
+            cubes, inside_cubes = estimator.get_cubes()
+            self.plot_cubes(cubes, inside_cubes)
 
             elapsed_time = time.time() - start_time
             st.sidebar.success(f"Przybliżona objętość: {volume:.2f} jednostek^3")
             st.sidebar.info(f"Czas obliczeń: {elapsed_time:.2f} sekund")
-
-    
+            progress_bar.empty()
 
     def plot_monte_carlo(self, points, inside_points):
         fig = go.Figure()
@@ -433,9 +463,122 @@ class App:
             self.plot_container.empty()
 
         self.plot_container = st.empty()
-        self.plot_container.plotly_chart(fig, use_container_width=True, key="monte_carlo_plot")
+        self.plot_container.plotly_chart(
+            fig, use_container_width=True, key="monte_carlo_plot"
+        )
 
-    
+    def plot_cubes(self, cube_centers, inside_cubes):
+        fig = go.Figure()
+
+        vertices = self.solid.vertices
+        faces = self.solid.faces
+        fig.add_trace(
+            go.Mesh3d(
+                x=vertices[:, 0],
+                y=vertices[:, 1],
+                z=vertices[:, 2],
+                i=faces[:, 0],
+                j=faces[:, 1],
+                k=faces[:, 2],
+                opacity=0.25,
+                color="lightblue",
+                name="Bryła",
+            )
+        )
+
+        def create_cube_lines(x, y, z, size):
+            r = [-0.5, 0.5]
+            vertices = [
+                [x + r[i] * size, y + r[j] * size, z + r[k] * size]
+                for i in range(2)
+                for j in range(2)
+                for k in range(2)
+            ]
+            edges = [
+                [0, 1],
+                [1, 3],
+                [3, 2],
+                [2, 0],  # dół
+                [4, 5],
+                [5, 7],
+                [7, 6],
+                [6, 4],  # góra
+                [0, 4],
+                [1, 5],
+                [2, 6],
+                [3, 7],  # boki
+            ]
+            x_lines, y_lines, z_lines = [], [], []
+            for edge in edges:
+                for idx in [0, 1]:
+                    x_lines.append(vertices[edge[idx]][0])
+                    y_lines.append(vertices[edge[idx]][1])
+                    z_lines.append(vertices[edge[idx]][2])
+                x_lines.append(None)  # Przerwa między krawędziami
+                y_lines.append(None)
+                z_lines.append(None)
+            return x_lines, y_lines, z_lines
+
+        inside_x, inside_y, inside_z = [], [], []
+        outside_x, outside_y, outside_z = [], [], []
+        for i, center in enumerate(cube_centers):
+            x_lines, y_lines, z_lines = create_cube_lines(
+                center[0], center[1], center[2], self.cube_size
+            )
+            if inside_cubes[i]:  
+                inside_x.extend(x_lines)
+                inside_y.extend(y_lines)
+                inside_z.extend(z_lines)
+            else:  
+                outside_x.extend(x_lines)
+                outside_y.extend(y_lines)
+                outside_z.extend(z_lines)
+
+        
+        if inside_x:  
+            fig.add_trace(
+                go.Scatter3d(
+                    x=inside_x,
+                    y=inside_y,
+                    z=inside_z,
+                    mode="lines",
+                    line=dict(color="green", width=2),
+                    name="Wewnętrzne sześciany",
+                    hoverinfo="none",
+                )
+            )
+
+        if outside_x:  
+            fig.add_trace(
+                go.Scatter3d(
+                    x=outside_x,
+                    y=outside_y,
+                    z=outside_z,
+                    mode="lines",
+                    line=dict(color="red", width=1),
+                    opacity=0.3,
+                    name="Zewnętrzne sześciany",
+                    hoverinfo="none",
+                )
+            )
+
+        fig.update_layout(
+            scene=dict(
+                xaxis=dict(visible=False),
+                yaxis=dict(visible=False),
+                zaxis=dict(visible=False),
+                aspectmode="data",
+            ),
+            title="Sześciany wewnątrz i na zewnątrz bryły",
+        )
+
+        if self.plot_container is not None:
+            self.plot_container.empty()
+
+        self.plot_container = st.empty()
+        self.plot_container.plotly_chart(
+            fig, use_container_width=True, key="cubes_plot"
+        )
 
 
 def run_app():
@@ -452,8 +595,6 @@ def run_app():
     app.monte_carlo_ui()
     app.cube_ui()
     app.display_info()
-
-
 
 
 if __name__ == "__main__":
