@@ -265,6 +265,8 @@ class App:
                 aspectmode="data",
             ),
             title="Bryła",
+            margin=dict(l=0, r=0, b=0, t=30),
+            height=500,
         )
 
         if self.plot_container is None:
@@ -456,6 +458,8 @@ class App:
                 aspectmode="data",
             ),
             title="Punkty Monte Carlo",
+            margin=dict(l=0, r=0, b=0, t=30),
+            height=500,
         )
 
         if self.plot_container is not None:
@@ -568,6 +572,8 @@ class App:
                 aspectmode="data",
             ),
             title="Sześciany wewnątrz i na zewnątrz bryły",
+            margin=dict(l=0, r=0, b=0, t=30),
+            height=500,
         )
 
         if self.plot_container is not None:
