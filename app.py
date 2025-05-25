@@ -179,9 +179,9 @@ class CubeVolumeEstimator:
         inside = np.zeros(total_cubes, dtype=bool)
         centers = []  # Lista do przechowywania centrów sześcianów
 
-        for xi, x in enumerate(x_vals):
-            for yi, y in enumerate(y_vals):
-                for zi, z in enumerate(z_vals):
+        for x in x_vals:
+            for y in y_vals:
+                for z in z_vals:
                     cube_center = np.array(
                         [x + cube_size / 2, y + cube_size / 2, z + cube_size / 2]
                     )
@@ -189,7 +189,7 @@ class CubeVolumeEstimator:
                     centers.append(cube_center)
 
                     if inside[checked_cubes]:
-                        inside_count += 1
+                        inside_count += 1         
 
                     checked_cubes += 1
 
@@ -296,7 +296,6 @@ class App:
 
     def monte_carlo_ui(self):
         if self.solid is None:
-            st.warning("Nie wczytano pliku STL.")
             return
 
         st.sidebar.subheader("metoda Monte Carlo")
