@@ -77,7 +77,6 @@ class Solid:
     def contains(self, points):
         return np.array([self.is_point_inside(point) for point in points], dtype=bool)
 
-
     def info(self):
         if self.stl_mesh is None:
             return "Nie wczytano pliku STL."
@@ -141,7 +140,7 @@ class MonteCarloVolumeEstimator:
 
         for i, point in enumerate(self.points):
             inside[i] = self.solid.is_point_inside(point)
-            
+
             if progress_callback and i % max(1, total // 100) == 0:
                 progress_callback(i / total)
 
@@ -163,7 +162,7 @@ class CubeVolumeEstimator:
             axis=0
         )
         self.inside_cubes = None
-        self.cube_centers = None 
+        self.cube_centers = None
 
     def run(self, progress_callback=None):
         min_bounds, max_bounds = self.bounding_box
@@ -293,6 +292,7 @@ class App:
                     pass
             else:
                 st.sidebar.write(f"{key}: {value}")
+                
 
     def monte_carlo_ui(self):
         if self.solid is None:
@@ -525,17 +525,16 @@ class App:
             x_lines, y_lines, z_lines = create_cube_lines(
                 center[0], center[1], center[2], self.cube_size
             )
-            if inside_cubes[i]:  
+            if inside_cubes[i]:
                 inside_x.extend(x_lines)
                 inside_y.extend(y_lines)
                 inside_z.extend(z_lines)
-            else:  
+            else:
                 outside_x.extend(x_lines)
                 outside_y.extend(y_lines)
                 outside_z.extend(z_lines)
 
-        
-        if inside_x:  
+        if inside_x:
             fig.add_trace(
                 go.Scatter3d(
                     x=inside_x,
@@ -548,7 +547,7 @@ class App:
                 )
             )
 
-        if outside_x:  
+        if outside_x:
             fig.add_trace(
                 go.Scatter3d(
                     x=outside_x,
@@ -592,8 +591,18 @@ def run_app():
 
     app.load_stl()
     app.display_stl()
-    app.monte_carlo_ui()
-    app.cube_ui()
+
+    method = st.sidebar.selectbox(
+        "Wybierz metodę obliczania objętości",
+        options=["Monte Carlo", "Prostokąty"],
+        index=0,
+    )
+
+    if method == "Monte Carlo":
+        app.monte_carlo_ui()
+    elif method == "Prostokąty":
+        app.cube_ui()
+
     app.display_info()
 
 
