@@ -215,8 +215,6 @@ class App:
         self.default_plot = None
         self.cube_size = 1.0
 
-    def set_computed_flag(self, val):
-        st.session_state.is_monte_carlo_computed = val
 
     def load_stl(self):
         st.sidebar.title("Wczytaj plik STL")
@@ -312,35 +310,11 @@ class App:
             help="Liczba punktów Monte Carlo do oszacowania objętości.",
         )
 
-        col1, col2 = st.sidebar.columns(2, gap="small")
-
-        with col1:
-            calculate_button = st.button(
-                "Oblicz objętość",
-                key="calculate_button",
-                on_click=self.set_computed_flag,
-                args=(True,),
-            )
-
-        reset_button = False
-        if st.session_state.is_monte_carlo_computed:
-            with col2:
-                reset_button = st.button(
-                    "Resetuj wyniki",
-                    key="reset_button",
-                    on_click=self.set_computed_flag,
-                    args=(False,),
-                )
-
-        if reset_button:
-            if self.plot_container is not None:
-                self.plot_container.empty()
-
-            self.plot_container.plotly_chart(
-                self.default_plot, use_container_width=True, key=f"plot_{uuid4()}"
-            )
-
-            st.sidebar.info("Wyniki zostały zresetowane.")
+        calculate_button = st.sidebar.button(
+            "Oblicz objętość",
+            key="calculate_button",
+            args=(True,),
+        )
 
         if calculate_button:
             if self.plot_container is not None:
@@ -590,9 +564,6 @@ def run_app():
     st.title("Kalkulator objętości bryły")
 
     app = App()
-
-    if "is_monte_carlo_computed" not in st.session_state:
-        st.session_state.is_monte_carlo_computed = False
 
     app.load_stl()
     app.display_stl()
