@@ -154,58 +154,94 @@ class MonteCarloVolumeEstimator:
         return volume_estimate
 
 
-class CubeVolumeEstimator:
-    def __init__(self, solid, cube_size=1):
+class CuboidVolumeEstimator:
+    def __init__(self, solid, cuboid_size_x=1.0, cuboid_size_y=1.0):
         self.solid = solid
-        self.cube_size = cube_size
-        self.bounding_box = self.solid.vertices.min(axis=0), self.solid.vertices.max(
-            axis=0
+        self.cuboid_size_x = cuboid_size_x
+        self.cuboid_size_y = cuboid_size_y
+        self.cube_centers = []
+        self.heights = []
+
+    def run(self):
+        min_bounds, max_bounds = self.solid.vertices.min(axis=0), self.solid.vertices.max(axis=0)
+
+        x_start, x_end = min_bounds[0], max_bounds[0]
+        y_start, y_end = min_bounds[1], max_bounds[1]
+
+        nx = int((x_end - x_start) // self.cuboid_size_x)
+        ny = int((y_end - y_start) // self.cuboid_size_y)
+
+        volume = 0.0
+        self.cube_centers = []
+        self.heights = []
+
+        for i in range(nx):
+            for j in range(ny):
+                x = x_start + (i + 0.5) * self.cuboid_size_x
+                y = y_start + (j + 0.5) * self.cuboid_size_y
+
+                z_max = self.find_top_surface_height(np.array([x, y, min_bounds[2]]))
+
+                if z_max is not None:
+                    h = z_max - min_bounds[2]
+                    v = self.cuboid_size_x * self.cuboid_size_y * h
+                    volume += v
+
+                    self.cube_centers.append([x, y, min_bounds[2] + h / 2.0])
+                    self.heights.append(h)
+
+        return volume
+
+    def find_top_surface_height(self, origin):
+        direction = np.array([0, 0, 1])
+        max_z = None
+
+        y_in_range = (origin[1] >= self.solid.triangle_bboxes[:, 0, 1]) & (
+            origin[1] <= self.solid.triangle_bboxes[:, 1, 1]
         )
-        self.inside_cubes = None
-        self.cube_centers = None
+        x_in_range = (origin[0] >= self.solid.triangle_bboxes[:, 0, 0]) & (
+            origin[0] <= self.solid.triangle_bboxes[:, 1, 0]
+        )
+        candidates = np.where(y_in_range & x_in_range)[0]
 
-    def run(self, progress_callback=None):
-        min_bounds, max_bounds = self.bounding_box
-        cube_size = self.cube_size
-        cube_volume = cube_size**3
+        for idx in candidates:
+            v0 = self.solid.vertices[self.solid.faces[idx][0]]
+            v1 = self.solid.vertices[self.solid.faces[idx][1]]
+            v2 = self.solid.vertices[self.solid.faces[idx][2]]
 
-        x_vals = np.arange(min_bounds[0], max_bounds[0], cube_size)
-        y_vals = np.arange(min_bounds[1], max_bounds[1], cube_size)
-        z_vals = np.arange(min_bounds[2], max_bounds[2], cube_size)
+            intersect, z_val = self.ray_intersects_triangle_z(origin, direction, v0, v1, v2)
+            if intersect:
+                if max_z is None or z_val > max_z:
+                    max_z = z_val
 
-        total_cubes = len(x_vals) * len(y_vals) * len(z_vals)
-        inside_count = 0
-        checked_cubes = 0
-        inside = np.zeros(total_cubes, dtype=bool)
-        centers = []  # Lista do przechowywania centrów sześcianów
+        return max_z
 
-        for x in x_vals:
-            for y in y_vals:
-                for z in z_vals:
-                    cube_center = np.array(
-                        [x + cube_size / 2, y + cube_size / 2, z + cube_size / 2]
-                    )
-                    inside[checked_cubes] = self.solid.is_point_inside(cube_center)
-                    centers.append(cube_center)
+    def ray_intersects_triangle_z(self, orig, dir, v0, v1, v2):
+        EPSILON = 1e-8
+        edge1 = v1 - v0
+        edge2 = v2 - v0
+        h = np.cross(dir, edge2)
+        a = np.dot(edge1, h)
+        if -EPSILON < a < EPSILON:
+            return False, None
 
-                    if inside[checked_cubes]:
-                        inside_count += 1         
+        f = 1.0 / a
+        s = orig - v0
+        u = f * np.dot(s, h)
+        if u < 0.0 or u > 1.0:
+            return False, None
 
-                    checked_cubes += 1
+        q = np.cross(s, edge1)
+        v = f * np.dot(dir, q)
+        if v < 0.0 or u + v > 1.0:
+            return False, None
 
-                    if (
-                        progress_callback
-                        and checked_cubes % max(1, total_cubes // 100) == 0
-                    ):
-                        progress_callback(checked_cubes / total_cubes)
-
-        volume_estimate = inside_count * cube_volume
-        self.inside_cubes = inside
-        self.cube_centers = np.array(centers)  # Zapis centrów sześcianów
-        return volume_estimate
-
-    def get_cubes(self):
-        return self.cube_centers, self.inside_cubes
+        t = f * np.dot(edge2, q)
+        if t > EPSILON:
+            intersection = orig + dir * t
+            return True, intersection[2]
+        else:
+            return False, None
 
 
 class App:
@@ -364,23 +400,20 @@ class App:
                 self.plot_container.empty()
 
             start_time = time.time()
-            estimator = CubeVolumeEstimator(self.solid, self.cube_size)
+            estimator = CuboidVolumeEstimator(
+                self.solid, cuboid_size_x=self.cube_size, cuboid_size_y=self.cube_size
+            )
 
-            def update_progress(pct):
-                progress_bar.progress(
-                    min(int(pct * 100), 100), text=f"Obliczanie... {int(pct * 100)}%"
-                )
-
-            progress_bar = st.progress(0, text="Obliczanie objętości...")
-
-            volume = estimator.run(progress_callback=update_progress)
-            cubes, inside_cubes = estimator.get_cubes()
-            self.plot_cubes(cubes, inside_cubes)
+            volume = estimator.run()
+            cube_centers, heights = estimator.cube_centers, estimator.heights
+            self.cube_size = (self.cube_size, self.cube_size)
+            self.plot_cuboids(cube_centers, heights)
+            
 
             elapsed_time = time.time() - start_time
             st.sidebar.success(f"Przybliżona objętość: {volume:.2f} jednostek^3")
             st.sidebar.info(f"Czas obliczeń: {elapsed_time:.2f} sekund")
-            progress_bar.empty()
+            # progress_bar.empty()
 
     def plot_monte_carlo(self, points, inside_points):
         fig = go.Figure()
@@ -444,9 +477,14 @@ class App:
             fig, use_container_width=True, key="monte_carlo_plot"
         )
 
-    def plot_cubes(self, cube_centers, inside_cubes):
+    def plot_cuboids(self, cube_centers, heights):
+        """
+        Rysuje bryłę (Mesh3d) oraz krawędzie prostopadłościanów,
+        których środki i wysokości podano w cube_centers i heights.
+        """
         fig = go.Figure()
 
+        # 1) Dodaj samą bryłę jako półprzezroczysty Mesh3d
         vertices = self.solid.vertices
         faces = self.solid.faces
         fig.add_trace(
@@ -463,81 +501,86 @@ class App:
             )
         )
 
-        def create_cube_lines(x, y, z, size):
-            r = [-0.5, 0.5]
-            vertices = [
-                [x + r[i] * size, y + r[j] * size, z + r[k] * size]
-                for i in range(2)
-                for j in range(2)
-                for k in range(2)
-            ]
+        # 2) Funkcja pomocnicza: generuje linie krawędzi jednego prostopadłościanu
+        def create_cuboid_edges(center, size, height):
+            """
+            center: [x, y, z_center] (środek prostopadłościanu)
+            size: (size_x, size_y)
+            height: pełna wysokość prostopadłościanu
+            zwraca: trzy listy x_lines, y_lines, z_lines z None między krawędziami
+            """
+            cx, cy, cz = center
+            sx, sy = size
+            dz = height / 2.0
+
+            # połowy wymiarów w płaszczyźnie XY
+            dx = sx / 2.0
+            dy = sy / 2.0
+
+            # oś dolnej podstawy (zmin) i górnej podstawy (zmax)
+            zmin = cz - dz
+            zmax = cz + dz
+
+            # 8 wierzchołków względem środka:
+            corners = np.array([
+                [cx - dx, cy - dy, zmin],  # 0: dolne-prawo-lewo
+                [cx + dx, cy - dy, zmin],  # 1
+                [cx + dx, cy + dy, zmin],  # 2
+                [cx - dx, cy + dy, zmin],  # 3
+                [cx - dx, cy - dy, zmax],  # 4: górne-prawo-lewo
+                [cx + dx, cy - dy, zmax],  # 5
+                [cx + dx, cy + dy, zmax],  # 6
+                [cx - dx, cy + dy, zmax],  # 7
+            ])
+
+            # lista par indeksów wierzchołków, które tworzą krawędzie
             edges = [
-                [0, 1],
-                [1, 3],
-                [3, 2],
-                [2, 0],  # dół
-                [4, 5],
-                [5, 7],
-                [7, 6],
-                [6, 4],  # góra
-                [0, 4],
-                [1, 5],
-                [2, 6],
-                [3, 7],  # boki
+                [0, 1], [1, 2], [2, 3], [3, 0],  # dolna podstawa
+                [4, 5], [5, 6], [6, 7], [7, 4],  # górna podstawa
+                [0, 4], [1, 5], [2, 6], [3, 7],  # krawędzie pionowe
             ]
+
             x_lines, y_lines, z_lines = [], [], []
-            for edge in edges:
-                for idx in [0, 1]:
-                    x_lines.append(vertices[edge[idx]][0])
-                    y_lines.append(vertices[edge[idx]][1])
-                    z_lines.append(vertices[edge[idx]][2])
-                x_lines.append(None)  # Przerwa między krawędziami
+            for e in edges:
+                # dla każdej krawędzi: dwa końce plus None separator
+                x_lines.append(corners[e[0], 0])
+                y_lines.append(corners[e[0], 1])
+                z_lines.append(corners[e[0], 2])
+
+                x_lines.append(corners[e[1], 0])
+                y_lines.append(corners[e[1], 1])
+                z_lines.append(corners[e[1], 2])
+
+                x_lines.append(None)
                 y_lines.append(None)
                 z_lines.append(None)
+
             return x_lines, y_lines, z_lines
 
-        inside_x, inside_y, inside_z = [], [], []
-        outside_x, outside_y, outside_z = [], [], []
-        for i, center in enumerate(cube_centers):
-            x_lines, y_lines, z_lines = create_cube_lines(
-                center[0], center[1], center[2], self.cube_size
-            )
-            if inside_cubes[i]:
-                inside_x.extend(x_lines)
-                inside_y.extend(y_lines)
-                inside_z.extend(z_lines)
-            else:
-                outside_x.extend(x_lines)
-                outside_y.extend(y_lines)
-                outside_z.extend(z_lines)
+        # 3) Zbierz wszystkie linie ze wszystkich prostopadłościanów
+        all_x, all_y, all_z = [], [], []
+        for idx, center in enumerate(cube_centers):
+            h = heights[idx]
+            sx, sy = self.cube_size  # rozmiar w X i Y (tę parę ustawiasz w cube_ui)
+            x_l, y_l, z_l = create_cuboid_edges(center, (sx, sy), h)
+            all_x.extend(x_l)
+            all_y.extend(y_l)
+            all_z.extend(z_l)
 
-        if inside_x:
-            fig.add_trace(
-                go.Scatter3d(
-                    x=inside_x,
-                    y=inside_y,
-                    z=inside_z,
-                    mode="lines",
-                    line=dict(color="green", width=2),
-                    name="Wewnętrzne sześciany",
-                    hoverinfo="none",
-                )
+        # 4) Dodaj te linie jako jeden Scatter3d
+        fig.add_trace(
+            go.Scatter3d(
+                x=all_x,
+                y=all_y,
+                z=all_z,
+                mode="lines",
+                line=dict(color="green", width=2),
+                name="Krawędzie prostopadłościanów",
+                hoverinfo="none",
             )
+        )
 
-        if outside_x:
-            fig.add_trace(
-                go.Scatter3d(
-                    x=outside_x,
-                    y=outside_y,
-                    z=outside_z,
-                    mode="lines",
-                    line=dict(color="red", width=1),
-                    opacity=0.3,
-                    name="Zewnętrzne sześciany",
-                    hoverinfo="none",
-                )
-            )
-
+        # 5) Ustawienia layoutu i wyrenderuj w kontenerze
         fig.update_layout(
             scene=dict(
                 xaxis=dict(visible=False),
@@ -545,18 +588,16 @@ class App:
                 zaxis=dict(visible=False),
                 aspectmode="data",
             ),
-            title="Sześciany wewnątrz i na zewnątrz bryły",
+            title="Prostopadłościany dopasowane do bryły",
             margin=dict(l=0, r=0, b=0, t=30),
             height=500,
         )
 
         if self.plot_container is not None:
             self.plot_container.empty()
-
         self.plot_container = st.empty()
-        self.plot_container.plotly_chart(
-            fig, use_container_width=True, key="cubes_plot"
-        )
+        self.plot_container.plotly_chart(fig, use_container_width=True, key="cuboid_plot")
+
 
 
 def run_app():
