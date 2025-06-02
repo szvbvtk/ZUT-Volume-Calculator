@@ -1,10 +1,9 @@
-import streamlit as st
-import numpy as np
-from stl import mesh
 import plotly.graph_objects as go
 from io import BytesIO
+import streamlit as st
+from stl import mesh
+import numpy as np
 import time
-from uuid import uuid4
 
 
 def ray_intersects_triangle(orig, dir, v0, v1, v2):
@@ -13,23 +12,26 @@ def ray_intersects_triangle(orig, dir, v0, v1, v2):
     edge2 = v2 - v0
     h = np.cross(dir, edge2)
     a = np.dot(edge1, h)
-
     if -EPSILON < a < EPSILON:
-        return False
+        return False, None
 
     f = 1.0 / a
     s = orig - v0
     u = f * np.dot(s, h)
     if u < 0.0 or u > 1.0:
-        return False
+        return False, None
 
     q = np.cross(s, edge1)
     v = f * np.dot(dir, q)
     if v < 0.0 or u + v > 1.0:
-        return False
+        return False, None
 
     t = f * np.dot(edge2, q)
-    return t > EPSILON
+    if t > EPSILON:
+        intersection = orig + dir * t
+        return True, intersection[2]
+    else:
+        return False, None
 
 
 class Solid:
@@ -69,7 +71,7 @@ class Solid:
             v1 = self.vertices[self.faces[i][1]]
             v2 = self.vertices[self.faces[i][2]]
 
-            if ray_intersects_triangle(point, direction_vector, v0, v1, v2):
+            if ray_intersects_triangle(point, direction_vector, v0, v1, v2)[0]:
                 intersection_count += 1
 
         return intersection_count % 2 == 1
@@ -116,23 +118,10 @@ class MonteCarloVolumeEstimator:
             size=(self.num_points, 3),
         )
 
-    def run(self):
-        self.generate_random_points()
-
-        self.inside_points = self.solid.contains(self.points)
-
-        bounding_box_volume = np.prod(self.bounding_box[1] - self.bounding_box[0])
-
-        volume_estimate = (
-            np.sum(self.inside_points) / self.num_points
-        ) * bounding_box_volume
-
-        return volume_estimate
-
     def get_points(self):
         return self.points, self.inside_points
 
-    def run_with_progress(self, progress_callback=None):
+    def run(self, progress_callback=None):
         self.generate_random_points()
 
         total = len(self.points)
@@ -162,7 +151,7 @@ class CuboidVolumeEstimator:
         self.cube_centers = []
         self.heights = []
 
-    def run(self):
+    def run(self, progress_callback=None):
         min_bounds, max_bounds = self.solid.vertices.min(axis=0), self.solid.vertices.max(axis=0)
 
         x_start, x_end = min_bounds[0], max_bounds[0]
@@ -177,6 +166,9 @@ class CuboidVolumeEstimator:
 
         for i in range(nx):
             for j in range(ny):
+                if progress_callback and (i * ny + j) % max(1, nx * ny // 100) == 0:
+                    progress_callback((i * ny + j) / (nx * ny))
+
                 x = x_start + (i + 0.5) * self.cuboid_size_x
                 y = y_start + (j + 0.5) * self.cuboid_size_y
 
@@ -209,39 +201,12 @@ class CuboidVolumeEstimator:
             v1 = self.solid.vertices[self.solid.faces[idx][1]]
             v2 = self.solid.vertices[self.solid.faces[idx][2]]
 
-            intersect, z_val = self.ray_intersects_triangle_z(origin, direction, v0, v1, v2)
+            intersect, z_val = ray_intersects_triangle(origin, direction, v0, v1, v2)
             if intersect:
                 if max_z is None or z_val > max_z:
                     max_z = z_val
 
         return max_z
-
-    def ray_intersects_triangle_z(self, orig, dir, v0, v1, v2):
-        EPSILON = 1e-8
-        edge1 = v1 - v0
-        edge2 = v2 - v0
-        h = np.cross(dir, edge2)
-        a = np.dot(edge1, h)
-        if -EPSILON < a < EPSILON:
-            return False, None
-
-        f = 1.0 / a
-        s = orig - v0
-        u = f * np.dot(s, h)
-        if u < 0.0 or u > 1.0:
-            return False, None
-
-        q = np.cross(s, edge1)
-        v = f * np.dot(dir, q)
-        if v < 0.0 or u + v > 1.0:
-            return False, None
-
-        t = f * np.dot(edge2, q)
-        if t > EPSILON:
-            intersection = orig + dir * t
-            return True, intersection[2]
-        else:
-            return False, None
 
 
 class App:
@@ -366,7 +331,7 @@ class App:
 
             progress_bar = st.progress(0, text="Obliczanie objętości...")
 
-            volume = estimator.run_with_progress(progress_callback=update_progress)
+            volume = estimator.run(progress_callback=update_progress)
             #
             points, inside_points = estimator.get_points()
             self.plot_monte_carlo(points, inside_points)
@@ -399,12 +364,19 @@ class App:
             if self.plot_container is not None:
                 self.plot_container.empty()
 
+            def update_progress(pct):
+                progress_bar.progress(
+                    min(int(pct * 100), 100), text=f"Obliczanie... {int(pct * 100)}%"
+                )
+
             start_time = time.time()
             estimator = CuboidVolumeEstimator(
                 self.solid, cuboid_size_x=self.cube_size, cuboid_size_y=self.cube_size
             )
 
-            volume = estimator.run()
+            progress_bar = st.progress(0, text="Obliczanie objętości...")
+
+            volume = estimator.run(progress_callback=update_progress)
             cube_centers, heights = estimator.cube_centers, estimator.heights
             self.cube_size = (self.cube_size, self.cube_size)
             self.plot_cuboids(cube_centers, heights)
@@ -413,7 +385,8 @@ class App:
             elapsed_time = time.time() - start_time
             st.sidebar.success(f"Przybliżona objętość: {volume:.2f} jednostek^3")
             st.sidebar.info(f"Czas obliczeń: {elapsed_time:.2f} sekund")
-            # progress_bar.empty()
+
+            progress_bar.empty()
 
     def plot_monte_carlo(self, points, inside_points):
         fig = go.Figure()
