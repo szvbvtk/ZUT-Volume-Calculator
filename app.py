@@ -214,7 +214,7 @@ class App:
         self.solid = None
         self.plot_container = None
         self.default_plot = None
-        self.cube_size = 1.0
+        self.cube_size = None
 
 
     def load_stl(self):
@@ -348,14 +348,24 @@ class App:
 
         st.sidebar.subheader("metoda sześcianów")
 
-        self.cube_size = st.sidebar.number_input(
+        cube_size_a = st.sidebar.number_input(
             "Rozmiar sześcianu",
             min_value=0.01,
             max_value=50.0,
             value=1.0,
             step=0.01,
             format="%.2f",
-            help="Rozmiar sześcianu do oszacowania objętości.",
+            help="Rozmiar podstawy sześcianu w kierunku X.",
+        )
+
+        cube_size_b = st.sidebar.number_input(
+            "Rozmiar sześcianu w Y",
+            min_value=0.01,
+            max_value=50.0,
+            value=1.0,
+            step=0.01,
+            format="%.2f",
+            help="Rozmiar podstawy sześcianu w kierunku Y.",
         )
 
         calculate_button = st.sidebar.button("Oblicz objętość", key="calculate_button2")
@@ -371,14 +381,14 @@ class App:
 
             start_time = time.time()
             estimator = CuboidVolumeEstimator(
-                self.solid, cuboid_size_x=self.cube_size, cuboid_size_y=self.cube_size
+                self.solid, cuboid_size_x=cube_size_a, cuboid_size_y=cube_size_b
             )
 
             progress_bar = st.progress(0, text="Obliczanie objętości...")
 
             volume = estimator.run(progress_callback=update_progress)
             cube_centers, heights = estimator.cube_centers, estimator.heights
-            self.cube_size = (self.cube_size, self.cube_size)
+            self.cube_size = (cube_size_a, cube_size_b)
             self.plot_cuboids(cube_centers, heights)
             
 
