@@ -304,7 +304,7 @@ class App:
         num_points = st.sidebar.number_input(
             "Liczba punktów Monte Carlo",
             min_value=10,
-            max_value=100000,
+            max_value=1000000,
             value=1000,
             step=100,
             format="%d",
@@ -351,7 +351,7 @@ class App:
         cube_size_a = st.sidebar.number_input(
             "Długość prostopadłościanu",
             min_value=0.01,
-            max_value=50.0,
+            max_value=100.0,
             value=1.0,
             step=0.01,
             format="%.2f",
@@ -361,7 +361,7 @@ class App:
         cube_size_b = st.sidebar.number_input(
             "Szerokość prostopadłościanu",
             min_value=0.01,
-            max_value=50.0,
+            max_value=100.0,
             value=1.0,
             step=0.01,
             format="%.2f",
