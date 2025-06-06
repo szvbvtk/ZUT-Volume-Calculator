@@ -87,9 +87,9 @@ class Solid:
                 "Liczba wierzchołków": len(self.vertices),
                 "Liczba ścian": len(self.faces),
                 "Wymiary": {
-                    "X": [np.min(self.vertices[:, 0]), np.max(self.vertices[:, 0])],
-                    "Y": [np.min(self.vertices[:, 1]), np.max(self.vertices[:, 1])],
-                    "Z": [np.min(self.vertices[:, 2]), np.max(self.vertices[:, 2])],
+                    "X": [float(np.min(self.vertices[:, 0])), float(np.max(self.vertices[:, 0]))],
+                    "Y": [float(np.min(self.vertices[:, 1])), float(np.max(self.vertices[:, 1]))],
+                    "Z": [float(np.min(self.vertices[:, 2])), float(np.max(self.vertices[:, 2]))],
                 },
             }
 
