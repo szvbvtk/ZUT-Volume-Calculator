@@ -346,26 +346,26 @@ class App:
             st.warning("Nie wczytano pliku STL.")
             return
 
-        st.sidebar.subheader("metoda sześcianów")
+        st.sidebar.subheader("metoda prostokątów")
 
         cube_size_a = st.sidebar.number_input(
-            "Rozmiar sześcianu",
+            "Długość prostopadłościanu",
             min_value=0.01,
             max_value=50.0,
             value=1.0,
             step=0.01,
             format="%.2f",
-            help="Rozmiar podstawy sześcianu w kierunku X.",
+            help="Rozmiar podstawy sześcianu.",
         )
 
         cube_size_b = st.sidebar.number_input(
-            "Rozmiar sześcianu w Y",
+            "Szerokość prostopadłościanu",
             min_value=0.01,
             max_value=50.0,
             value=1.0,
             step=0.01,
             format="%.2f",
-            help="Rozmiar podstawy sześcianu w kierunku Y.",
+            help="Rozmiar podstawy sześcianu.",
         )
 
         calculate_button = st.sidebar.button("Oblicz objętość", key="calculate_button2")
