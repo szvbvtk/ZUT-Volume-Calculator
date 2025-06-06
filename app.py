@@ -6,29 +6,34 @@ import numpy as np
 import time
 
 
-def ray_intersects_triangle(orig, dir, v0, v1, v2):
-    EPSILON = 1e-8
-    edge1 = v1 - v0
-    edge2 = v2 - v0
-    h = np.cross(dir, edge2)
-    a = np.dot(edge1, h)
-    if -EPSILON < a < EPSILON:
+def ray_intersects_triangle(ray_origin, ray_direction, vertex0, vertex1, vertex2):
+    eps = 1e-8
+
+    edge1 = vertex1 - vertex0
+    edge2 = vertex2 - vertex0
+
+    ray_cross = np.cross(ray_direction, edge2)
+    det = np.dot(edge1, ray_cross)
+
+    if -eps < det < eps:
         return False, None
 
-    f = 1.0 / a
-    s = orig - v0
-    u = f * np.dot(s, h)
-    if u < 0.0 or u > 1.0:
+    det_inv = 1.0 / det
+    ray_to_vertex = ray_origin - vertex0
+
+    u_bar_coord = det_inv * np.dot(ray_to_vertex, ray_cross)
+
+    if u_bar_coord < 0.0 or u_bar_coord > 1.0:
         return False, None
 
-    q = np.cross(s, edge1)
-    v = f * np.dot(dir, q)
-    if v < 0.0 or u + v > 1.0:
+    ray_to_vertex_cross = np.cross(ray_to_vertex, edge1)
+    v_bar_coord = det_inv * np.dot(ray_direction, ray_to_vertex_cross)
+    if v_bar_coord < 0.0 or u_bar_coord + v_bar_coord > 1.0:
         return False, None
 
-    t = f * np.dot(edge2, q)
-    if t > EPSILON:
-        intersection = orig + dir * t
+    t_distance = det_inv * np.dot(edge2, ray_to_vertex_cross)
+    if t_distance > eps:
+        intersection = ray_origin + ray_direction * t_distance
         return True, intersection[2]
     else:
         return False, None
@@ -47,7 +52,6 @@ class Solid:
     def process_stl(self):
         self.vertices = self.stl_mesh.vectors.reshape(-1, 3)
         self.faces = np.arange(len(self.vertices)).reshape(-1, 3)
-        # self.faces = self.mesh.vectors
 
         tris = self.vertices[self.faces]
         self.triangle_bboxes = np.empty((len(self.faces), 2, 3))
@@ -55,7 +59,7 @@ class Solid:
         self.triangle_bboxes[:, 1, :] = np.max(tris, axis=1)
 
     def is_point_inside(self, point):
-        direction_vector = np.array([1, 0, 0])
+        ray_directionection_vector = np.array([1, 0, 0])
         intersection_count = 0
 
         y_in_range = (point[1] >= self.triangle_bboxes[:, 0, 1]) & (
@@ -67,11 +71,11 @@ class Solid:
         candidates = np.where(y_in_range & z_in_range)[0]
 
         for i in candidates:
-            v0 = self.vertices[self.faces[i][0]]
-            v1 = self.vertices[self.faces[i][1]]
-            v2 = self.vertices[self.faces[i][2]]
+            vertex0 = self.vertices[self.faces[i][0]]
+            vertex1 = self.vertices[self.faces[i][1]]
+            vertex2 = self.vertices[self.faces[i][2]]
 
-            if ray_intersects_triangle(point, direction_vector, v0, v1, v2)[0]:
+            if ray_intersects_triangle(point, ray_directionection_vector, vertex0, vertex1, vertex2)[0]:
                 intersection_count += 1
 
         return intersection_count % 2 == 1
@@ -185,7 +189,7 @@ class CuboidVolumeEstimator:
         return volume
 
     def find_top_surface_height(self, origin):
-        direction = np.array([0, 0, 1])
+        ray_directionection = np.array([0, 0, 1])
         max_z = None
 
         y_in_range = (origin[1] >= self.solid.triangle_bboxes[:, 0, 1]) & (
@@ -197,11 +201,11 @@ class CuboidVolumeEstimator:
         candidates = np.where(y_in_range & x_in_range)[0]
 
         for idx in candidates:
-            v0 = self.solid.vertices[self.solid.faces[idx][0]]
-            v1 = self.solid.vertices[self.solid.faces[idx][1]]
-            v2 = self.solid.vertices[self.solid.faces[idx][2]]
+            vertex0 = self.solid.vertices[self.solid.faces[idx][0]]
+            vertex1 = self.solid.vertices[self.solid.faces[idx][1]]
+            vertex2 = self.solid.vertices[self.solid.faces[idx][2]]
 
-            intersect, z_val = ray_intersects_triangle(origin, direction, v0, v1, v2)
+            intersect, z_val = ray_intersects_triangle(origin, ray_directionection, vertex0, vertex1, vertex2)
             if intersect:
                 if max_z is None or z_val > max_z:
                     max_z = z_val
@@ -226,7 +230,6 @@ class App:
                 uploaded_file.name, fh=BytesIO(uploaded_file.read())
             )
             self.solid = Solid(stl_mesh)
-            # st.success("Plik STL został wczytany pomyślnie.")
         else:
             st.info("Proszę wczytać plik STL.")
 
