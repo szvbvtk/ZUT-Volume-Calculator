@@ -59,7 +59,7 @@ class Solid:
         self.triangle_bboxes[:, 1, :] = np.max(tris, axis=1)
 
     def is_point_inside(self, point):
-        ray_directionection_vector = np.array([1, 0, 0])
+        ray_direction_vector = np.array([1, 0, 0])
         intersection_count = 0
 
         y_in_range = (point[1] >= self.triangle_bboxes[:, 0, 1]) & (
@@ -75,7 +75,9 @@ class Solid:
             vertex1 = self.vertices[self.faces[i][1]]
             vertex2 = self.vertices[self.faces[i][2]]
 
-            if ray_intersects_triangle(point, ray_directionection_vector, vertex0, vertex1, vertex2)[0]:
+            if ray_intersects_triangle(
+                point, ray_direction_vector, vertex0, vertex1, vertex2
+            )[0]:
                 intersection_count += 1
 
         return intersection_count % 2 == 1
@@ -91,9 +93,18 @@ class Solid:
                 "Liczba wierzchołków": len(self.vertices),
                 "Liczba ścian": len(self.faces),
                 "Wymiary": {
-                    "X": [float(np.min(self.vertices[:, 0])), float(np.max(self.vertices[:, 0]))],
-                    "Y": [float(np.min(self.vertices[:, 1])), float(np.max(self.vertices[:, 1]))],
-                    "Z": [float(np.min(self.vertices[:, 2])), float(np.max(self.vertices[:, 2]))],
+                    "X": [
+                        float(np.min(self.vertices[:, 0])),
+                        float(np.max(self.vertices[:, 0])),
+                    ],
+                    "Y": [
+                        float(np.min(self.vertices[:, 1])),
+                        float(np.max(self.vertices[:, 1])),
+                    ],
+                    "Z": [
+                        float(np.min(self.vertices[:, 2])),
+                        float(np.max(self.vertices[:, 2])),
+                    ],
                 },
             }
 
@@ -156,7 +167,9 @@ class CuboidVolumeEstimator:
         self.heights = []
 
     def run(self, progress_callback=None):
-        min_bounds, max_bounds = self.solid.vertices.min(axis=0), self.solid.vertices.max(axis=0)
+        min_bounds, max_bounds = self.solid.vertices.min(
+            axis=0
+        ), self.solid.vertices.max(axis=0)
 
         x_start, x_end = min_bounds[0], max_bounds[0]
         y_start, y_end = min_bounds[1], max_bounds[1]
@@ -189,7 +202,7 @@ class CuboidVolumeEstimator:
         return volume
 
     def find_top_surface_height(self, origin):
-        ray_directionection = np.array([0, 0, 1])
+        ray_direction = np.array([0, 0, 1])
         max_z = None
 
         y_in_range = (origin[1] >= self.solid.triangle_bboxes[:, 0, 1]) & (
@@ -205,7 +218,9 @@ class CuboidVolumeEstimator:
             vertex1 = self.solid.vertices[self.solid.faces[idx][1]]
             vertex2 = self.solid.vertices[self.solid.faces[idx][2]]
 
-            intersect, z_val = ray_intersects_triangle(origin, ray_directionection, vertex0, vertex1, vertex2)
+            intersect, z_val = ray_intersects_triangle(
+                origin, ray_direction, vertex0, vertex1, vertex2
+            )
             if intersect:
                 if max_z is None or z_val > max_z:
                     max_z = z_val
@@ -219,7 +234,6 @@ class App:
         self.plot_container = None
         self.default_plot = None
         self.cube_size = None
-
 
     def load_stl(self):
         st.sidebar.title("Wczytaj plik STL")
@@ -296,7 +310,6 @@ class App:
                     pass
             else:
                 st.sidebar.write(f"{key}: {value}")
-                
 
     def monte_carlo_ui(self):
         if self.solid is None:
@@ -393,7 +406,6 @@ class App:
             cube_centers, heights = estimator.cube_centers, estimator.heights
             self.cube_size = (cube_size_a, cube_size_b)
             self.plot_cuboids(cube_centers, heights)
-            
 
             elapsed_time = time.time() - start_time
             st.sidebar.success(f"Przybliżona objętość: {volume:.2f} jednostek^3")
@@ -464,13 +476,8 @@ class App:
         )
 
     def plot_cuboids(self, cube_centers, heights):
-        """
-        Rysuje bryłę (Mesh3d) oraz krawędzie prostopadłościanów,
-        których środki i wysokości podano w cube_centers i heights.
-        """
         fig = go.Figure()
 
-        # 1) Dodaj samą bryłę jako półprzezroczysty Mesh3d
         vertices = self.solid.vertices
         faces = self.solid.faces
         fig.add_trace(
@@ -487,48 +494,47 @@ class App:
             )
         )
 
-        # 2) Funkcja pomocnicza: generuje linie krawędzi jednego prostopadłościanu
         def create_cuboid_edges(center, size, height):
-            """
-            center: [x, y, z_center] (środek prostopadłościanu)
-            size: (size_x, size_y)
-            height: pełna wysokość prostopadłościanu
-            zwraca: trzy listy x_lines, y_lines, z_lines z None między krawędziami
-            """
             cx, cy, cz = center
             sx, sy = size
             dz = height / 2.0
 
-            # połowy wymiarów w płaszczyźnie XY
             dx = sx / 2.0
             dy = sy / 2.0
 
-            # oś dolnej podstawy (zmin) i górnej podstawy (zmax)
             zmin = cz - dz
             zmax = cz + dz
 
-            # 8 wierzchołków względem środka:
-            corners = np.array([
-                [cx - dx, cy - dy, zmin],  # 0: dolne-prawo-lewo
-                [cx + dx, cy - dy, zmin],  # 1
-                [cx + dx, cy + dy, zmin],  # 2
-                [cx - dx, cy + dy, zmin],  # 3
-                [cx - dx, cy - dy, zmax],  # 4: górne-prawo-lewo
-                [cx + dx, cy - dy, zmax],  # 5
-                [cx + dx, cy + dy, zmax],  # 6
-                [cx - dx, cy + dy, zmax],  # 7
-            ])
+            corners = np.array(
+                [
+                    [cx - dx, cy - dy, zmin], 
+                    [cx + dx, cy - dy, zmin], 
+                    [cx + dx, cy + dy, zmin], 
+                    [cx - dx, cy + dy, zmin], 
+                    [cx - dx, cy - dy, zmax], 
+                    [cx + dx, cy - dy, zmax],  
+                    [cx + dx, cy + dy, zmax],  
+                    [cx - dx, cy + dy, zmax],  
+                ]
+            )
 
-            # lista par indeksów wierzchołków, które tworzą krawędzie
             edges = [
-                [0, 1], [1, 2], [2, 3], [3, 0],  # dolna podstawa
-                [4, 5], [5, 6], [6, 7], [7, 4],  # górna podstawa
-                [0, 4], [1, 5], [2, 6], [3, 7],  # krawędzie pionowe
+                [0, 1],
+                [1, 2],
+                [2, 3],
+                [3, 0],  # dolna podstawa
+                [4, 5],
+                [5, 6],
+                [6, 7],
+                [7, 4],  # górna podstawa
+                [0, 4],
+                [1, 5],
+                [2, 6],
+                [3, 7],  # krawędzie pionowe
             ]
 
             x_lines, y_lines, z_lines = [], [], []
             for e in edges:
-                # dla każdej krawędzi: dwa końce plus None separator
                 x_lines.append(corners[e[0], 0])
                 y_lines.append(corners[e[0], 1])
                 z_lines.append(corners[e[0], 2])
@@ -543,17 +549,15 @@ class App:
 
             return x_lines, y_lines, z_lines
 
-        # 3) Zbierz wszystkie linie ze wszystkich prostopadłościanów
         all_x, all_y, all_z = [], [], []
         for idx, center in enumerate(cube_centers):
             h = heights[idx]
-            sx, sy = self.cube_size  # rozmiar w X i Y (tę parę ustawiasz w cube_ui)
+            sx, sy = self.cube_size
             x_l, y_l, z_l = create_cuboid_edges(center, (sx, sy), h)
             all_x.extend(x_l)
             all_y.extend(y_l)
             all_z.extend(z_l)
 
-        # 4) Dodaj te linie jako jeden Scatter3d
         fig.add_trace(
             go.Scatter3d(
                 x=all_x,
@@ -566,7 +570,6 @@ class App:
             )
         )
 
-        # 5) Ustawienia layoutu i wyrenderuj w kontenerze
         fig.update_layout(
             scene=dict(
                 xaxis=dict(visible=False),
@@ -582,8 +585,9 @@ class App:
         if self.plot_container is not None:
             self.plot_container.empty()
         self.plot_container = st.empty()
-        self.plot_container.plotly_chart(fig, use_container_width=True, key="cuboid_plot")
-
+        self.plot_container.plotly_chart(
+            fig, use_container_width=True, key="cuboid_plot"
+        )
 
 
 def run_app():
